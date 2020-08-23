@@ -1,11 +1,11 @@
 use ggez::{Context, ContextBuilder, GameResult, graphics, timer};
 use ggez::conf::{FullscreenType, WindowMode, WindowSetup};
 use ggez::event::{self, EventHandler};
+use ggez::graphics::{Color, WHITE};
 use ggez::nalgebra::Point2;
 use legion::prelude::*;
 use nalgebra::Vector2;
 use rand::Rng;
-use ggez::graphics::{WHITE, Color};
 
 // Define our entity data types
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,7 +30,7 @@ struct Mass(f32);
 #[derive(Clone, Debug, PartialEq)]
 struct Data {
     name: String,
-    sun:bool,
+    sun: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,28 +39,16 @@ struct Model(usize);
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Static;
 
-const WIDTH: f32 = 800.0;
-const HEIGHT: f32 = 600.0;
-const NUM_BODIES: i32 = 300;
-const GRAVITATIONAL_CONSTANT: f32 = 0.1f32;
-const YELLOW:Color = Color::new(1., 1.0, 0., 1.0);
+const WIDTH: f32 = 1600.0;
+const HEIGHT: f32 = 1200.0;
+const NUM_BODIES: i32 = 1000;
+const INITIAL_SPEED: f32 = 50.;
+const SUN_SIZE: f32 = 250.;
+const GRAVITATIONAL_CONSTANT: f32 = 0.9f32;
+const YELLOW: Color = Color::new(1., 1.0, 0., 1.0);
+const GREEN: Color = Color::new(0., 1.0, 0., 1.0);
 
 fn main() {
-
-    // {
-    //     let vec = Vector2::new(0., 1.);
-    //     let vec2 = Vector2::new(1.,0.);
-    //     let vec3 = vec + vec2;
-    //     let mut vec4 = vec3.clone();
-    //     vec4.set_magnitude(1.);
-    //
-    //     println!("vector: {:?}", vec);
-    //     println!("vector2: {:?}", vec2);
-    //     println!("vector3: {:?}", vec3);
-    //     println!("vector4: {:?}", vec4);
-    // }
-
-
     let mut window_setup = WindowSetup::default();
     window_setup.vsync = false;
     let (mut ctx, mut event_loop) = ContextBuilder::new("my_game", "Cool Game Author")
@@ -109,7 +97,7 @@ impl MyGame {
                 Data { name: "sun".to_string(), sun: true },
                 Position { vector: Vector2::new(WIDTH / 2., HEIGHT / 2.) },
                 Velocity { vector: Vector2::new(0., 0.) },
-                Mass(100.)
+                Mass(SUN_SIZE)
             )],
         );
         world.insert(
@@ -118,8 +106,8 @@ impl MyGame {
                 let x = rng.gen_range(0., WIDTH);
                 let y = rng.gen_range(0., HEIGHT);
 
-                let x_velocity = rng.gen_range(-1., 1.);
-                let y_velocity = rng.gen_range(-1., 1.);
+                let x_velocity = rng.gen_range(-INITIAL_SPEED, INITIAL_SPEED);
+                let y_velocity = rng.gen_range(-INITIAL_SPEED, INITIAL_SPEED);
 
                 let mass = rng.gen_range(1., 9.);
                 (
@@ -151,13 +139,32 @@ impl MyGame {
         graphics::draw(
             ctx,
             &stats_display,
-            (Point2::new(0.0, 0.0), graphics::BLACK),
+            (Point2::new(0.0, 0.0), GREEN),
+        )
+    }
+
+    pub fn draw_body_counter(&self, ctx: &mut Context, bodies: usize) -> GameResult<()> {
+        // let fps = timer::fps(ctx);
+        // let delta = timer::delta(ctx);
+        // let stats_display = graphics::Text::new(format!("FPS: {:.0}, delta: {:?}", fps, delta));
+        let stats_display = graphics::Text::new(format!("Bodies: {:.0}", bodies));
+        // println!(
+        //     "[draw] ticks: {}\tfps: {}\tdelta: {:?}",
+        //     timer::ticks(ctx),
+        //     fps,
+        //     delta,
+        // );
+        graphics::draw(
+            ctx,
+            &stats_display,
+            (Point2::new(0.0, 20.0), GREEN),
         )
     }
 }
 
 impl EventHandler for MyGame {
-    fn update(&mut self, _ctx: &mut Context) -> GameResult<()> {
+    fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
+        let dt = timer::delta(ctx).as_secs_f32();
         let query = <(Read<Position>, Read<Mass>, Read<Data>)>::query();
         let bodies = query.iter(&self.world)
             .map(|(pos, mass, data)| (*pos, mass.0, data.as_ref().clone()))
@@ -194,10 +201,11 @@ impl EventHandler for MyGame {
             }
         }
 
+        // update positions
         let query = <(Write<Position>, Read<Velocity>)>::query();
         for (mut position, velocity) in query.iter_mut(&mut self.world) {
             let current_position: Vector2<f32> = position.vector.clone_owned();
-            let velocity: Vector2<f32> = velocity.vector.clone_owned();
+            let velocity: Vector2<f32> = velocity.vector.clone_owned() * dt;
 
             let new_position: Vector2<f32> = current_position + velocity;
 
@@ -205,25 +213,36 @@ impl EventHandler for MyGame {
         }
 
         // collision detection
-        let query = <(Read<Position>, Read<Data>)>::query();
+        let query = <(Read<Position>, Read<Velocity>, Read<Mass>, Read<Data>)>::query();
         let bodies = query.iter(&self.world)
-            .map(|(pos, data)| (*pos, data.as_ref().clone()))
+            .map(|(pos, velocity, mass, data)| (*pos, velocity.as_ref().clone(), mass.0, data.as_ref().clone()))
             .collect::<Vec<_>>();
 
-        let query = <(Read<Position>, Write<Velocity>, Read<Data>)>::query();
+        let query = <(Read<Position>, Write<Velocity>, Write<Mass>, Read<Data>)>::query();
         let mut entities_to_delete = vec![];
-        for (entity, (position, _velocity, data)) in query.iter_entities_mut(&mut self.world) {
-            for (other_position, other_data) in &bodies {
+        for (entity, (position, mut velocity, mut mass, data)) in query.iter_entities_mut(&mut self.world) {
+            for (other_position, other_velocity, other_mass, other_data) in &bodies {
                 let data: &Data = &data;
                 let other_data: &Data = other_data;
-                if data == other_data || data.sun{
+                if data == other_data || data.sun {
                     continue;
                 }
 
                 let difference: Vector2<f32> = &other_position.vector - &position.vector;
                 let distance = difference.magnitude();
-                if distance < 3. {
-                    entities_to_delete.push(entity);
+
+                // collision
+                if mass.0.sqrt() + other_mass.sqrt() > distance {
+                    // the bigger body swallows the smaller one
+                    // this will one twice for each collision, with this and other swapped, lets utilize this
+                    if mass.0 > *other_mass {
+                        // when this is the bigger one, enlarge it
+                        mass.0 += *other_mass;
+                        velocity.vector += &other_velocity.vector;
+                    } else {
+                        // when it's the smaller one, schedule it for deletion
+                        entities_to_delete.push(entity);
+                    }
                 }
             }
         }
@@ -238,6 +257,10 @@ impl EventHandler for MyGame {
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::clear(ctx, [0.1, 0.2, 0.3, 1.0].into());
         self.draw_fps_counter(ctx)?;
+
+        let bodies = <Read<Data>>::query().iter(&self.world).count();
+        self.draw_body_counter(ctx, bodies)?;
+
 
         let query = <(Read<Position>, Read<Data>, Read<Mass>)>::query();
         for (pos, data, mass) in query.iter(&self.world) {
