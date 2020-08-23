@@ -6,6 +6,7 @@ use ggez::nalgebra::Point2;
 use legion::prelude::*;
 use nalgebra::Vector2;
 use rand::Rng;
+use std::f32::consts::PI;
 
 // Define our entity data types
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,7 +26,21 @@ struct Velocity {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Mass(f32);
+struct Dimensions {
+    radius: f32,
+    mass: f32,
+}
+
+impl Dimensions {
+    fn from_mass(mass: f32) -> Dimensions {
+        let radius: f32 = mass / (4. / 3. * PI);
+        let radius = radius.cbrt();
+        Dimensions {
+            mass,
+            radius
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct Data {
@@ -41,10 +56,11 @@ struct Static;
 
 const WIDTH: f32 = 1600.0;
 const HEIGHT: f32 = 1200.0;
-const NUM_BODIES: i32 = 1000;
-const INITIAL_SPEED: f32 = 50.;
-const SUN_SIZE: f32 = 250.;
-const GRAVITATIONAL_CONSTANT: f32 = 0.9f32;
+const NUM_BODIES: i32 = 100;
+const BODY_INITIAL_MASS_MAX: f32 = 50.;
+const INITIAL_SPEED: i32 = 50;
+const SUN_SIZE: f32 = 1000.;
+const GRAVITATIONAL_CONSTANT: f32 = 0.5;
 const YELLOW: Color = Color::new(1., 1.0, 0., 1.0);
 const GREEN: Color = Color::new(0., 1.0, 0., 1.0);
 
@@ -97,7 +113,7 @@ impl MyGame {
                 Data { name: "sun".to_string(), sun: true },
                 Position { vector: Vector2::new(WIDTH / 2., HEIGHT / 2.) },
                 Velocity { vector: Vector2::new(0., 0.) },
-                Mass(SUN_SIZE)
+                Dimensions::from_mass(SUN_SIZE)
             )],
         );
         world.insert(
@@ -106,15 +122,21 @@ impl MyGame {
                 let x = rng.gen_range(0., WIDTH);
                 let y = rng.gen_range(0., HEIGHT);
 
-                let x_velocity = rng.gen_range(-INITIAL_SPEED, INITIAL_SPEED);
-                let y_velocity = rng.gen_range(-INITIAL_SPEED, INITIAL_SPEED);
+                let x_velocity = match INITIAL_SPEED {
+                    0 => 0.,
+                    speed => rng.gen_range(-speed as f32, speed as f32),
+                };
+                let y_velocity = match INITIAL_SPEED {
+                    0 => 0.,
+                    speed=> rng.gen_range(-speed as f32, speed as f32),
+                };
 
-                let mass = rng.gen_range(1., 9.);
+                let mass = rng.gen_range(1., BODY_INITIAL_MASS_MAX);
                 (
                     Data { name: i.to_string(), sun: false },
                     Position { vector: Vector2::new(x, y) },
                     Velocity { vector: Vector2::new(x_velocity, y_velocity) },
-                    Mass(mass)
+                    Dimensions::from_mass(mass)
                 )
             }),
         );
@@ -165,14 +187,14 @@ impl MyGame {
 impl EventHandler for MyGame {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
         let dt = timer::delta(ctx).as_secs_f32();
-        let query = <(Read<Position>, Read<Mass>, Read<Data>)>::query();
+        let query = <(Read<Position>, Read<Dimensions>, Read<Data>)>::query();
         let bodies = query.iter(&self.world)
-            .map(|(pos, mass, data)| (*pos, mass.0, data.as_ref().clone()))
+            .map(|(pos, dimensions, data)| (*pos, dimensions.mass, dimensions.radius, data.as_ref().clone()))
             .collect::<Vec<_>>();
 
-        let query = <(Read<Position>, Read<Mass>, Write<Velocity>, Read<Data>)>::query();
-        for (position, mass, mut velocity, data) in query.iter_mut(&mut self.world) {
-            for (other_position, other_mass, other_data) in &bodies {
+        let query = <(Read<Position>, Read<Dimensions>, Write<Velocity>, Read<Data>)>::query();
+        for (position, dimensions, mut velocity, data) in query.iter_mut(&mut self.world) {
+            for (other_position, other_mass, _other_radius, other_data) in &bodies {
                 let data: &Data = &data;
                 let other_data: &Data = other_data;
                 if data == other_data || data.sun {
@@ -185,7 +207,7 @@ impl EventHandler for MyGame {
                 let difference: Vector2<f32> = &other_position.vector - &position.vector;
                 let distance = difference.magnitude();
                 let gravity_direction: Vector2<f32> = difference.normalize();
-                let gravity: f32 = GRAVITATIONAL_CONSTANT * (mass.0 * other_mass) / (distance * distance);
+                let gravity: f32 = GRAVITATIONAL_CONSTANT * (dimensions.mass * other_mass) / (distance * distance);
 
                 // *velocity.vector = *velocity.vector + *velocity.vector;
 
@@ -213,15 +235,15 @@ impl EventHandler for MyGame {
         }
 
         // collision detection
-        let query = <(Read<Position>, Read<Velocity>, Read<Mass>, Read<Data>)>::query();
+        let query = <(Read<Position>, Read<Velocity>, Read<Dimensions>, Read<Data>)>::query();
         let bodies = query.iter(&self.world)
-            .map(|(pos, velocity, mass, data)| (*pos, velocity.as_ref().clone(), mass.0, data.as_ref().clone()))
+            .map(|(pos, velocity, dimensions, data)| (*pos, velocity.as_ref().clone(), dimensions.mass, dimensions.radius, data.as_ref().clone()))
             .collect::<Vec<_>>();
 
-        let query = <(Read<Position>, Write<Velocity>, Write<Mass>, Read<Data>)>::query();
+        let query = <(Read<Position>, Write<Velocity>, Write<Dimensions>, Read<Data>)>::query();
         let mut entities_to_delete = vec![];
-        for (entity, (position, mut velocity, mut mass, data)) in query.iter_entities_mut(&mut self.world) {
-            for (other_position, other_velocity, other_mass, other_data) in &bodies {
+        for (entity, (position, mut velocity, mut dimensions, data)) in query.iter_entities_mut(&mut self.world) {
+            for (other_position, other_velocity, other_mass, other_radius, other_data) in &bodies {
                 let data: &Data = &data;
                 let other_data: &Data = other_data;
                 if data == other_data || data.sun {
@@ -232,13 +254,16 @@ impl EventHandler for MyGame {
                 let distance = difference.magnitude();
 
                 // collision
-                if mass.0.sqrt() + other_mass.sqrt() > distance {
+                if dimensions.radius + other_radius > distance {
                     // the bigger body swallows the smaller one
                     // this will one twice for each collision, with this and other swapped, lets utilize this
-                    if mass.0 > *other_mass {
+                    if dimensions.mass > *other_mass {
                         // when this is the bigger one, enlarge it
-                        mass.0 += *other_mass;
-                        velocity.vector += &other_velocity.vector;
+                        // todo scale vector based on size difference
+                        let mass_ratio =  *other_mass / dimensions.mass;
+                        velocity.vector += &other_velocity.vector * mass_ratio;
+                        // velocity.vector = Vector2::new(0.,0.);
+                        dimensions.mass += *other_mass;
                     } else {
                         // when it's the smaller one, schedule it for deletion
                         entities_to_delete.push(entity);
@@ -262,13 +287,13 @@ impl EventHandler for MyGame {
         self.draw_body_counter(ctx, bodies)?;
 
 
-        let query = <(Read<Position>, Read<Data>, Read<Mass>)>::query();
-        for (pos, data, mass) in query.iter(&self.world) {
+        let query = <(Read<Position>, Read<Data>, Read<Dimensions>)>::query();
+        for (pos, data, dimensions) in query.iter(&self.world) {
             let circle = graphics::Mesh::new_circle(
                 ctx,
                 graphics::DrawMode::fill(),
                 Point2::new(0.0, 0.0),
-                mass.0.sqrt(),
+                dimensions.radius,
                 2.0,
                 match data.sun {
                     true => YELLOW,
@@ -296,5 +321,11 @@ mod tests {
         let result = result.magnitude();
 
         print!("{:?}", result)
+    }
+
+    #[test]
+    fn test_dimensions_from_volume() {
+        let result = Dimensions::from_mass(113.);
+        assert_eq!(3., result.radius)
     }
 }
