@@ -22,7 +22,7 @@ pub(crate) const GRAVITATIONAL_CONSTANT: f32 = 0.5;
 fn main() {
     run(
         Settings {
-            title: "Square Example",
+            title: "Rusteroids",
             size: Vector {
                 x: WIDTH,
                 y: HEIGHT,
