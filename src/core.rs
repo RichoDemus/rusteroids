@@ -1,13 +1,15 @@
 use std::f32::consts::PI;
 
 use legion::prelude::*;
-use nalgebra::Vector2;
+use nalgebra::{Vector2, Isometry2};
 use rand::Rng;
+use ncollide2d::query::{self, Proximity};
 
 use crate::{
     BODY_INITIAL_MASS_MAX, GRAVITATIONAL_CONSTANT, HEIGHT, INITIAL_SPEED, NUM_BODIES, SUN_SIZE,
     WIDTH,
 };
+use ncollide2d::shape::Ball;
 
 // Define our entity data types
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -185,11 +187,7 @@ impl Core {
                     continue;
                 }
 
-                let difference: Vector2<f32> = other_position.vector - position.vector;
-                let distance = difference.magnitude();
-
-                // collision
-                if dimensions.radius + other_radius > distance {
+                if are_colliding(position.vector, dimensions.radius, other_position.vector, *other_radius) {
                     // the bigger body swallows the smaller one
                     // this will one twice for each collision, with this and other swapped, lets utilize this
                     if dimensions.mass > *other_mass {
@@ -249,6 +247,20 @@ fn calculate_gravitational_force(
     gravity_direction * gravity
 }
 
+fn are_colliding(position: Vector2<f32>, radius: f32, other_position: Vector2<f32>, other_radius:f32) -> bool {
+    let shape = Ball::new(radius);
+    let position = Isometry2::new(position, nalgebra::zero());
+    let other_shape = Ball::new(other_radius);
+    let other_position = Isometry2::new(other_position, nalgebra::zero());
+
+    let proximity = query::proximity(&position, &shape, &other_position, &other_shape, 0.);
+    if let Proximity::Intersecting = proximity {
+        true
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,11 +275,5 @@ mod tests {
         let result = result.magnitude();
 
         print!("{:?}", result)
-    }
-
-    #[test]
-    fn test_dimensions_from_volume() {
-        let result = Dimensions::from_mass(113.);
-        assert_eq!(3., result.radius)
     }
 }
