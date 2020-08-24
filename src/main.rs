@@ -1,8 +1,8 @@
-use ggez::conf::{FullscreenType, WindowMode, WindowSetup};
-use ggez::event::{self, EventHandler};
-use ggez::graphics::{Color, WHITE};
-use ggez::nalgebra::Point2;
-use ggez::{graphics, timer, Context, ContextBuilder, GameResult};
+use quicksilver::geom::Circle;
+use quicksilver::graphics::VectorFont;
+use quicksilver::{
+    geom::Vector, graphics::Color, run, Graphics, Input, Result, Settings, Timer, Window,
+};
 
 use crate::core::Core;
 
@@ -10,105 +10,81 @@ mod core;
 
 pub(crate) const WIDTH: f32 = 1600.0;
 pub(crate) const HEIGHT: f32 = 1200.0;
+#[cfg(debug_assertions)]
+pub(crate) const NUM_BODIES: i32 = 5;
+#[cfg(not(debug_assertions))]
 pub(crate) const NUM_BODIES: i32 = 100;
 pub(crate) const BODY_INITIAL_MASS_MAX: f32 = 50.;
 pub(crate) const INITIAL_SPEED: i32 = 50;
 pub(crate) const SUN_SIZE: f32 = 1000.;
 pub(crate) const GRAVITATIONAL_CONSTANT: f32 = 0.5;
-pub(crate) const YELLOW: Color = Color::new(1., 1.0, 0., 1.0);
-pub(crate) const GREEN: Color = Color::new(0., 1.0, 0., 1.0);
 
 fn main() {
-    let mut window_setup = WindowSetup::default();
-    window_setup.vsync = false;
-    let (mut ctx, mut event_loop) = ContextBuilder::new("my_game", "Cool Game Author")
-        .window_mode(WindowMode {
-            width: WIDTH,
-            height: HEIGHT,
-            maximized: false,
-            fullscreen_type: FullscreenType::Windowed,
-            borderless: false,
-            min_width: 0.0,
-            min_height: 0.0,
-            max_width: 0.0,
-            max_height: 0.0,
-            resizable: false,
-        })
-        .window_setup(window_setup)
-        .build()
-        .expect("aieee, could not create ggez context!");
-
-    // Create an instance of your event handler.
-    // Usually, you should provide it with the Context object to
-    // use when setting your game up.
-    let mut my_game = MyGame::new(&mut ctx);
-
-    // Run!
-    match event::run(&mut ctx, &mut event_loop, &mut my_game) {
-        Ok(_) => println!("Exited cleanly."),
-        Err(e) => println!("Error occured: {}", e),
-    }
+    run(
+        Settings {
+            title: "Square Example",
+            size: Vector {
+                x: WIDTH,
+                y: HEIGHT,
+            },
+            ..Settings::default()
+        },
+        app,
+    );
 }
 
-struct MyGame {
-    core: Core,
-}
+async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> {
+    let mut core = Core::new();
+    core.init();
 
-impl MyGame {
-    pub fn new(_ctx: &mut Context) -> MyGame {
-        let mut core = Core::new();
-        core.init();
-        MyGame { core }
-    }
+    // Here we make 2 kinds of timers.
+    // One to provide an consistant update time, so our example updates 30 times per second
+    // the other informs us when to draw the next frame, this causes our example to draw 60 times per second
+    let mut update_timer = Timer::time_per_second(60.0);
+    let mut draw_timer = Timer::time_per_second(60.0);
 
-    pub fn draw_fps_counter(&self, ctx: &mut Context) -> GameResult<()> {
-        let fps = timer::fps(ctx);
-        let stats_display = graphics::Text::new(format!("FPS: {:.0}", fps));
-        graphics::draw(ctx, &stats_display, (Point2::new(0.0, 0.0), GREEN))
-    }
+    let ttf = VectorFont::load("BebasNeue-Regular.ttf").await?;
+    let mut font = ttf.to_renderer(&gfx, 72.0)?;
 
-    pub fn draw_body_counter(&self, ctx: &mut Context, bodies: usize) -> GameResult<()> {
-        let stats_display = graphics::Text::new(format!("Bodies: {:.0}", bodies));
-        graphics::draw(ctx, &stats_display, (Point2::new(0.0, 20.0), GREEN))
-    }
-}
+    loop {
+        while input.next_event().await.is_some() {}
 
-impl EventHandler for MyGame {
-    fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
-        let dt = timer::delta(ctx).as_secs_f32();
-
-        self.core.tick(dt);
-
-        Ok(())
-    }
-
-    fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
-        graphics::clear(ctx, [0.1, 0.2, 0.3, 1.0].into());
-        self.draw_fps_counter(ctx)?;
-
-        let drawables = self.core.draw();
-        let num_drawables = drawables.len();
-        for drawable in drawables {
-            let circle = graphics::Mesh::new_circle(
-                ctx,
-                graphics::DrawMode::fill(),
-                Point2::new(0.0, 0.0),
-                drawable.radius,
-                2.0,
-                match drawable.sun {
-                    true => YELLOW,
-                    false => WHITE,
-                },
-            )?;
-            graphics::draw(
-                ctx,
-                &circle,
-                (Point2::new(drawable.position.x, drawable.position.y),),
-            )?;
+        let dt = update_timer.elapsed().as_secs_f32();
+        // We use a while loop rather than an if so that we can try to catch up in the event of having a slow down.
+        while update_timer.tick() {
+            core.tick(dt);
         }
 
-        self.draw_body_counter(ctx, num_drawables)?;
+        // Unlike the update cycle drawing doesn't change our state
+        // Because of this there is no point in trying to catch up if we are ever 2 frames late
+        // Instead it is better to drop/skip the lost frames
+        if draw_timer.exhaust().is_some() {
+            gfx.clear(Color::BLACK);
 
-        graphics::present(ctx)
+            let drawables = core.draw();
+            let num_bodies = drawables.len();
+            for drawable in drawables {
+                let circle = Circle::new(
+                    Vector::new(drawable.position.x, drawable.position.y),
+                    drawable.radius,
+                );
+                gfx.fill_circle(
+                    &circle,
+                    match drawable.sun {
+                        true => Color::YELLOW,
+                        false => Color::WHITE,
+                    },
+                );
+            }
+
+            font.draw(
+                &mut gfx,
+                format!("Bodies: {}", num_bodies).as_str(),
+                Color::GREEN,
+                Vector::new(50.0, 50.0),
+            )?;
+
+            gfx.present(&window)?;
+        }
     }
 }
