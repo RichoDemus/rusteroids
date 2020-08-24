@@ -64,9 +64,6 @@ impl Core {
     }
 
     pub(crate) fn init(&mut self) {
-        // let universe = Universe::new();
-        // let mut world = universe.create_world();
-
         let mut rng = rand::thread_rng();
         self.world.insert(
             (),
@@ -121,14 +118,7 @@ impl Core {
         let query = <(Read<Position>, Read<Dimensions>, Read<Data>)>::query();
         let bodies = query
             .iter(&self.world)
-            .map(|(pos, dimensions, data)| {
-                (
-                    *pos,
-                    dimensions.mass,
-                    dimensions.radius,
-                    data.as_ref().clone(),
-                )
-            })
+            .map(|(pos, dimensions, data)| (*pos, dimensions.mass, data.as_ref().clone()))
             .collect::<Vec<_>>();
 
         let query = <(
@@ -138,32 +128,19 @@ impl Core {
             Read<Data>,
         )>::query();
         for (position, dimensions, mut velocity, data) in query.iter_mut(&mut self.world) {
-            for (other_position, other_mass, _other_radius, other_data) in &bodies {
+            for (other_position, other_mass, other_data) in &bodies {
                 let data: &Data = &data;
                 let other_data: &Data = other_data;
                 if data == other_data || data.sun {
                     continue;
                 }
-                let position: &Position = &position;
-                // println!("\t\tComparing body {:?}: {:?} with {:?}: {:?}", data, position, other_data, other_position);
 
-                let difference: Vector2<f32> = &other_position.vector - &position.vector;
-                let distance = difference.magnitude();
-                let gravity_direction: Vector2<f32> = difference.normalize();
-                let gravity: f32 =
-                    GRAVITATIONAL_CONSTANT * (dimensions.mass * other_mass) / (distance * distance);
-
-                // *velocity.vector = *velocity.vector + *velocity.vector;
-
-                let force: Vector2<f32> = gravity_direction * gravity;
-                // let force: Vector2<f32> = force.into();
-                let original_vector: Vector2<f32> = velocity.vector.clone_owned();
-                let new_vector: Vector2<f32> = original_vector + force;
-                // println!("\tgravitational force: {:?}", force);
-                // let vel:Vector2<f32> = *velocity.vector + force;
-                // velocity.vector = vel;
-                velocity.vector = new_vector;
-                // println!("\ttotal force: {:?}", *velocity);
+                velocity.vector += calculate_gravitational_force(
+                    position.vector,
+                    dimensions.mass,
+                    other_position.vector,
+                    other_mass,
+                );
             }
         }
 
@@ -173,9 +150,7 @@ impl Core {
             let current_position: Vector2<f32> = position.vector.clone_owned();
             let velocity: Vector2<f32> = velocity.vector.clone_owned() * dt;
 
-            let new_position: Vector2<f32> = current_position + velocity;
-
-            position.vector = new_position;
+            position.vector = current_position + velocity;
         }
 
         // collision detection
@@ -185,7 +160,7 @@ impl Core {
             .map(|(pos, velocity, dimensions, data)| {
                 (
                     *pos,
-                    velocity.as_ref().clone(),
+                    *velocity.as_ref(),
                     dimensions.mass,
                     dimensions.radius,
                     data.as_ref().clone(),
@@ -210,7 +185,7 @@ impl Core {
                     continue;
                 }
 
-                let difference: Vector2<f32> = &other_position.vector - &position.vector;
+                let difference: Vector2<f32> = other_position.vector - position.vector;
                 let distance = difference.magnitude();
 
                 // collision
@@ -221,7 +196,7 @@ impl Core {
                         // when this is the bigger one, enlarge it
                         // todo scale vector based on size difference
                         let mass_ratio = *other_mass / dimensions.mass;
-                        velocity.vector += &other_velocity.vector * mass_ratio;
+                        velocity.vector += other_velocity.vector * mass_ratio;
                         // velocity.vector = Vector2::new(0.,0.);
                         dimensions.mass += *other_mass;
                     } else {
@@ -258,6 +233,20 @@ pub(crate) struct Drawable {
     pub(crate) position: Vector2<f32>,
     pub(crate) sun: bool,
     pub(crate) radius: f32,
+}
+
+fn calculate_gravitational_force(
+    position: Vector2<f32>,
+    mass: f32,
+    other_position: Vector2<f32>,
+    other_mass: &f32,
+) -> Vector2<f32> {
+    let difference: Vector2<f32> = other_position - position;
+    let distance = difference.magnitude();
+    let gravity_direction: Vector2<f32> = difference.normalize();
+    let gravity: f32 = GRAVITATIONAL_CONSTANT * (mass * other_mass) / (distance * distance);
+
+    gravity_direction * gravity
 }
 
 #[cfg(test)]
