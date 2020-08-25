@@ -1,14 +1,14 @@
+use quicksilver::blinds::event::Key::{Escape, Space};
+use quicksilver::blinds::event::MouseButton::Left;
 use quicksilver::geom::Circle;
 use quicksilver::graphics::VectorFont;
+use quicksilver::input::Event;
 use quicksilver::{
     geom::Vector, graphics::Color, run, Graphics, Input, Result, Settings, Timer, Window,
 };
 
 use crate::core::Core;
 use crate::util::convert;
-use quicksilver::blinds::event::Key::Space;
-use quicksilver::blinds::event::MouseButton::Left;
-use quicksilver::input::Event;
 
 mod core;
 mod util;
@@ -51,7 +51,8 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
     let ttf = VectorFont::load("BebasNeue-Regular.ttf").await?;
     let mut font = ttf.to_renderer(&gfx, 72.0)?;
 
-    loop {
+    let mut running = true;
+    while running {
         while let Some(event) = input.next_event().await {
             if let Event::PointerInput(pointer_input_event) = event {
                 if !pointer_input_event.is_down() && pointer_input_event.button() == Left {
@@ -62,6 +63,9 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
             } else if let Event::KeyboardInput(keyboard_event) = event {
                 if keyboard_event.is_down() && keyboard_event.key() == Space {
                     core.pause();
+                }
+                if keyboard_event.is_down() && keyboard_event.key() == Escape {
+                    running = false;
                 }
             }
         }
@@ -104,4 +108,5 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
             gfx.present(&window)?;
         }
     }
+    Ok(())
 }
