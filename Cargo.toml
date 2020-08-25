@@ -11,3 +11,4 @@ nalgebra = "0.21.1"
 rand = { version = "0.7.3", features = ["stdweb"] }
 quicksilver = { version = "0.4.0-alpha0.6", default-features = true, features = ["stdweb"]}
 ncollide2d = "0.23.2"
+itertools = "0.9.0"

@@ -1,16 +1,17 @@
 use std::f32::consts::PI;
+use std::ops::Not;
 
+use itertools::Itertools;
 use legion::prelude::*;
-use nalgebra::{Isometry2, Vector2};
-use ncollide2d::query::{self, Proximity};
+use nalgebra::{Isometry2, Point, Vector2};
+use ncollide2d::query::{self, PointQuery, Proximity};
+use ncollide2d::shape::Ball;
 use rand::Rng;
 
 use crate::{
     BODY_INITIAL_MASS_MAX, GRAVITATIONAL_CONSTANT, HEIGHT, INITIAL_SPEED, NUM_BODIES, SUN_SIZE,
     WIDTH,
 };
-use ncollide2d::shape::Ball;
-use std::ops::Not;
 
 // Define our entity data types
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -35,6 +36,11 @@ struct Dimensions {
     mass: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+struct MetaInfo {
+    selected: bool,
+}
+
 impl Dimensions {
     fn from_mass(mass: f32) -> Dimensions {
         let radius: f32 = mass / (4. / 3. * PI);
@@ -47,6 +53,11 @@ impl Dimensions {
 struct Data {
     name: String,
     sun: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Id {
+    id: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -86,6 +97,8 @@ impl Core {
                     vector: Vector2::new(0., 0.),
                 },
                 Dimensions::from_mass(SUN_SIZE),
+                MetaInfo::default(),
+                Id { id: -1 },
             )],
         );
         self.world.insert(
@@ -116,6 +129,8 @@ impl Core {
                         vector: Vector2::new(x_velocity, y_velocity),
                     },
                     Dimensions::from_mass(mass),
+                    MetaInfo::default(),
+                    Id { id: i },
                 )
             }),
         );
@@ -225,7 +240,7 @@ impl Core {
 
     pub(crate) fn draw(&self) -> Vec<Drawable> {
         let query = <(Read<Position>, Read<Data>, Read<Dimensions>)>::query();
-        query
+        let mut bodies = query
             .iter(&self.world)
             .map(|(pos, data, dimensions)| {
                 let position = *pos;
@@ -234,13 +249,68 @@ impl Core {
                     position,
                     sun: data.sun,
                     radius: dimensions.radius,
+                    select_marker: false,
                 }
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        let query = <(Read<Position>, Read<Dimensions>, Read<MetaInfo>)>::query();
+        let mut selection_markers = query
+            .iter(&self.world)
+            .filter(|(_, _, meta_info)| meta_info.selected)
+            .map(|(position, dimensions, _)| Drawable {
+                position: position.vector,
+                sun: false,
+                radius: dimensions.radius,
+                select_marker: true,
+            })
+            .collect::<Vec<_>>();
+        bodies.append(&mut selection_markers);
+        bodies
     }
 
-    pub(crate) fn click(&self, position: Vector2<f32>) {
-        println!("Clicked at {:?}", position);
+    pub(crate) fn click(&mut self, click_position: Vector2<f32>) {
+        let id_of_clicked_body = {
+            <(Read<Position>, Read<Dimensions>, Read<Id>)>::query()
+                .iter(&self.world)
+                .map(|(position, dimensions, id)| {
+                    let ball = Ball::new(dimensions.radius);
+                    let distance = ball.distance_to_point(
+                        &Isometry2::translation(position.vector.x, position.vector.y),
+                        &Point {
+                            coords: click_position,
+                        },
+                        true,
+                    );
+                    (distance, id)
+                })
+                .filter(|(distance, _)| distance < &5f32)
+                .sorted_by(|(left_distance, _), (right_distance, _)| {
+                    left_distance
+                        .partial_cmp(right_distance)
+                        .expect("couldn't unwrap ordering")
+                })
+                .next()
+                .map(|(_, id)| Id { id: id.id })
+        };
+
+        if let Some(clicked_id) = id_of_clicked_body {
+            // we clicked something, clear selected
+            <(Read<Id>, Write<MetaInfo>)>::query().for_each_mut(
+                &mut self.world,
+                |(id, mut meta_info)| {
+                    if &clicked_id == id.as_ref() {
+                        meta_info.selected = true;
+                    } else {
+                        meta_info.selected = false;
+                    }
+                },
+            );
+        } else {
+            <Write<MetaInfo>>::query().for_each_mut(&mut self.world, |mut meta_info| {
+                meta_info.selected = false;
+            });
+        }
     }
 
     pub(crate) fn pause(&mut self) {
@@ -252,6 +322,7 @@ pub(crate) struct Drawable {
     pub(crate) position: Vector2<f32>,
     pub(crate) sun: bool,
     pub(crate) radius: f32,
+    pub(crate) select_marker: bool,
 }
 
 fn calculate_gravitational_force(
@@ -289,6 +360,9 @@ fn are_colliding(
 
 #[cfg(test)]
 mod tests {
+    use nalgebra::{Isometry2, Point2, Vector2};
+    use ncollide2d::query::PointQuery;
+
     use super::*;
 
     #[test]
@@ -301,5 +375,16 @@ mod tests {
         let result = result.magnitude();
 
         print!("{:?}", result)
+    }
+
+    #[test]
+    fn test_click_inside() {
+        let cuboid = Ball::new(1.);
+        let click_pos = Point2::from(Vector2::new(11., 20.));
+
+        let cuboid_pos = Isometry2::translation(10., 20.);
+
+        // Solid projection.
+        assert_eq!(cuboid.distance_to_point(&cuboid_pos, &click_pos, true), 0.0);
     }
 }

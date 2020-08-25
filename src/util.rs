@@ -7,8 +7,9 @@ pub(crate) fn convert(vec: geom::Vector) -> Vector2<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use nalgebra::Vector2;
+
+    use super::*;
 
     #[test]
     fn vector_from_vector() {

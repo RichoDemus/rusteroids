@@ -1,6 +1,6 @@
 use quicksilver::blinds::event::Key::{Escape, Space};
 use quicksilver::blinds::event::MouseButton::Left;
-use quicksilver::geom::Circle;
+use quicksilver::geom::{Circle, Rectangle};
 use quicksilver::graphics::VectorFont;
 use quicksilver::input::Event;
 use quicksilver::{
@@ -85,17 +85,25 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
             let drawables = core.draw();
             let num_bodies = drawables.len();
             for drawable in drawables {
-                let circle = Circle::new(
-                    Vector::new(drawable.position.x, drawable.position.y),
-                    drawable.radius,
-                );
-                gfx.fill_circle(
-                    &circle,
-                    match drawable.sun {
-                        true => Color::YELLOW,
-                        false => Color::WHITE,
-                    },
-                );
+                if drawable.select_marker {
+                    let rectangle = Rectangle::new(
+                        Vector::new(drawable.position.x - 10., drawable.position.y - 10.),
+                        Vector::new(20., 20.),
+                    );
+                    gfx.stroke_rect(&rectangle, Color::GREEN)
+                } else {
+                    let circle = Circle::new(
+                        Vector::new(drawable.position.x, drawable.position.y),
+                        drawable.radius,
+                    );
+                    gfx.fill_circle(
+                        &circle,
+                        match drawable.sun {
+                            true => Color::YELLOW,
+                            false => Color::WHITE,
+                        },
+                    );
+                }
             }
 
             font.draw(
