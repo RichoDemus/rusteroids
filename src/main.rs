@@ -5,11 +5,16 @@ use quicksilver::{
 };
 
 use crate::core::Core;
+use crate::util::convert;
+use quicksilver::blinds::event::Key::Space;
+use quicksilver::blinds::event::MouseButton::Left;
+use quicksilver::input::Event;
 
 mod core;
+mod util;
 
-pub(crate) const WIDTH: f32 = 1600.0;
-pub(crate) const HEIGHT: f32 = 1200.0;
+pub(crate) const WIDTH: f32 = 800.0;
+pub(crate) const HEIGHT: f32 = 600.0;
 #[cfg(debug_assertions)]
 pub(crate) const NUM_BODIES: i32 = 5;
 #[cfg(not(debug_assertions))]
@@ -47,7 +52,19 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
     let mut font = ttf.to_renderer(&gfx, 72.0)?;
 
     loop {
-        while input.next_event().await.is_some() {}
+        while let Some(event) = input.next_event().await {
+            if let Event::PointerInput(pointer_input_event) = event {
+                if !pointer_input_event.is_down() && pointer_input_event.button() == Left {
+                    let mouse_position = input.mouse().location();
+
+                    core.click(convert(mouse_position));
+                }
+            } else if let Event::KeyboardInput(keyboard_event) = event {
+                if keyboard_event.is_down() && keyboard_event.key() == Space {
+                    core.pause();
+                }
+            }
+        }
 
         let dt = update_timer.elapsed().as_secs_f32();
         // We use a while loop rather than an if so that we can try to catch up in the event of having a slow down.

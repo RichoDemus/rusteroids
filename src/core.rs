@@ -1,15 +1,16 @@
 use std::f32::consts::PI;
 
 use legion::prelude::*;
-use nalgebra::{Vector2, Isometry2};
-use rand::Rng;
+use nalgebra::{Isometry2, Vector2};
 use ncollide2d::query::{self, Proximity};
+use rand::Rng;
 
 use crate::{
     BODY_INITIAL_MASS_MAX, GRAVITATIONAL_CONSTANT, HEIGHT, INITIAL_SPEED, NUM_BODIES, SUN_SIZE,
     WIDTH,
 };
 use ncollide2d::shape::Ball;
+use std::ops::Not;
 
 // Define our entity data types
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,13 +57,17 @@ struct Static;
 
 pub(crate) struct Core {
     world: World,
+    paused: bool,
 }
 
 impl Core {
     pub(crate) fn new() -> Core {
         let universe = Universe::new();
         let world = universe.create_world();
-        Core { world }
+        Core {
+            world,
+            paused: false,
+        }
     }
 
     pub(crate) fn init(&mut self) {
@@ -117,6 +122,9 @@ impl Core {
     }
 
     pub(crate) fn tick(&mut self, dt: f32) {
+        if self.paused {
+            return;
+        }
         let query = <(Read<Position>, Read<Dimensions>, Read<Data>)>::query();
         let bodies = query
             .iter(&self.world)
@@ -187,7 +195,12 @@ impl Core {
                     continue;
                 }
 
-                if are_colliding(position.vector, dimensions.radius, other_position.vector, *other_radius) {
+                if are_colliding(
+                    position.vector,
+                    dimensions.radius,
+                    other_position.vector,
+                    *other_radius,
+                ) {
                     // the bigger body swallows the smaller one
                     // this will one twice for each collision, with this and other swapped, lets utilize this
                     if dimensions.mass > *other_mass {
@@ -225,6 +238,14 @@ impl Core {
             })
             .collect::<Vec<_>>()
     }
+
+    pub(crate) fn click(&self, position: Vector2<f32>) {
+        println!("Clicked at {:?}", position);
+    }
+
+    pub(crate) fn pause(&mut self) {
+        self.paused = self.paused.not();
+    }
 }
 
 pub(crate) struct Drawable {
@@ -247,7 +268,12 @@ fn calculate_gravitational_force(
     gravity_direction * gravity
 }
 
-fn are_colliding(position: Vector2<f32>, radius: f32, other_position: Vector2<f32>, other_radius:f32) -> bool {
+fn are_colliding(
+    position: Vector2<f32>,
+    radius: f32,
+    other_position: Vector2<f32>,
+    other_radius: f32,
+) -> bool {
     let shape = Ball::new(radius);
     let position = Isometry2::new(position, nalgebra::zero());
     let other_shape = Ball::new(other_radius);
