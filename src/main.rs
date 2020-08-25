@@ -13,6 +13,12 @@ use crate::util::convert;
 mod core;
 mod util;
 
+// use 144 fps for non wasm release, use 60 fps for wasm or debug
+#[cfg(any(target_arch = "wasm32", debug_assertions))]
+pub(crate) const FPS: f32 = 60.0;
+#[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
+pub(crate) const FPS: f32 = 144.0;
+
 pub(crate) const WIDTH: f32 = 800.0;
 pub(crate) const HEIGHT: f32 = 600.0;
 #[cfg(debug_assertions)]
@@ -41,12 +47,15 @@ fn main() {
 async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> {
     let mut core = Core::new();
     core.init();
+    let mut frames: u32 = 0;
+    let mut last_fps: u32 = 0;
 
     // Here we make 2 kinds of timers.
     // One to provide an consistant update time, so our example updates 30 times per second
     // the other informs us when to draw the next frame, this causes our example to draw 60 times per second
-    let mut update_timer = Timer::time_per_second(60.0);
-    let mut draw_timer = Timer::time_per_second(60.0);
+    let mut update_timer = Timer::time_per_second(FPS);
+    let mut draw_timer = Timer::time_per_second(FPS);
+    let mut fps_timer = Timer::time_per_second(1.);
 
     let ttf = VectorFont::load("BebasNeue-Regular.ttf").await?;
     let mut font = ttf.to_renderer(&gfx, 72.0)?;
@@ -110,7 +119,19 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                 &mut gfx,
                 format!("Bodies: {}", num_bodies).as_str(),
                 Color::GREEN,
-                Vector::new(50.0, 50.0),
+                Vector::new(5.0, 100.0),
+            )?;
+
+            frames += 1;
+            if fps_timer.tick() {
+                last_fps = frames;
+                frames = 0;
+            }
+            font.draw(
+                &mut gfx,
+                format!("FPS: {}", last_fps).as_str(),
+                Color::GREEN,
+                Vector::new(5.0, 50.0),
             )?;
 
             gfx.present(&window)?;
