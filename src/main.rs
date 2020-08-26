@@ -59,7 +59,7 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
     let mut draw_timer = Timer::time_per_second(FPS);
     let mut fps_timer = Timer::time_per_second(1.);
 
-    let ttf = VectorFont::load("BebasNeue-Regular.ttf").await?;
+    let ttf = VectorFont::from_slice(include_bytes!("BebasNeue-Regular.ttf"));
     let mut font = ttf.to_renderer(&gfx, 72.0)?;
 
     let mut running = true;
