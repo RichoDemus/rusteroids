@@ -92,7 +92,7 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
         if draw_timer.exhaust().is_some() {
             gfx.clear(Color::BLACK);
 
-            let drawables = core.draw();
+            let (drawables, predicted_orbit) = core.draw();
             let num_bodies = drawables.len();
             for drawable in drawables {
                 if drawable.select_marker {
@@ -117,6 +117,12 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                         },
                     );
                 }
+            }
+
+            for orbit_point in predicted_orbit {
+                let circle =
+                    Circle::new(Vector::new(orbit_point.x as f32, orbit_point.y as f32), 1.);
+                gfx.fill_circle(&circle, Color::YELLOW);
             }
 
             font.draw(

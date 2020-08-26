@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::ops::Not;
 
@@ -69,6 +70,7 @@ struct Static;
 pub(crate) struct Core {
     world: World,
     paused: bool,
+    predicted_orbit: Option<Vec<Vector2<f64>>>,
 }
 
 impl Core {
@@ -78,6 +80,7 @@ impl Core {
         Core {
             world,
             paused: false,
+            predicted_orbit: None,
         }
     }
 
@@ -138,99 +141,67 @@ impl Core {
 
     pub(crate) fn tick(&mut self, dt: f64) {
         if self.paused {
+            if self.predicted_orbit.is_none() {
+                self.predicted_orbit = Some(predict_orbit(dt, &self.world));
+            }
             return;
         }
-        let query = <(Read<Position>, Read<Dimensions>, Read<Data>)>::query();
-        let bodies = query
-            .iter(&self.world)
-            .map(|(pos, dimensions, data)| (*pos, dimensions.mass, data.as_ref().clone()))
-            .collect::<Vec<_>>();
 
         let query = <(
             Read<Position>,
+            Read<Velocity>,
             Read<Dimensions>,
-            Write<Velocity>,
+            Read<MetaInfo>,
+            Read<Id>,
             Read<Data>,
         )>::query();
-        for (position, dimensions, mut velocity, data) in query.iter_mut(&mut self.world) {
-            for (other_position, other_mass, other_data) in &bodies {
-                let data: &Data = &data;
-                let other_data: &Data = other_data;
-                if data == other_data || data.sun {
-                    continue;
-                }
-
-                let gravitational_force = calculate_gravitational_force(
-                    position.vector,
-                    dimensions.mass,
-                    other_position.vector,
-                    other_mass,
-                );
-                velocity.vector += gravitational_force * dt;
-            }
-        }
-
-        // update positions
-        let query = <(Write<Position>, Read<Velocity>)>::query();
-        for (mut position, velocity) in query.iter_mut(&mut self.world) {
-            let current_position: Vector2<f64> = position.vector.clone_owned();
-            let velocity: Vector2<f64> = velocity.vector.clone_owned();
-
-            position.vector = current_position + velocity * dt;
-        }
-
-        // collision detection
-        let query = <(Read<Position>, Read<Velocity>, Read<Dimensions>, Read<Data>)>::query();
         let bodies = query
             .iter(&self.world)
-            .map(|(pos, velocity, dimensions, data)| {
-                (
-                    *pos,
-                    *velocity.as_ref(),
-                    dimensions.mass,
-                    dimensions.radius,
-                    data.as_ref().clone(),
-                )
+            .map(|(pos, velocity, dimensions, meta_info, id, data)| Body {
+                position: pos.vector,
+                velocity: velocity.vector,
+                radius: dimensions.radius,
+                mass: dimensions.mass,
+                selected: meta_info.selected,
+                id: id.id,
+                sun: data.sun,
+                delete: false,
             })
             .collect::<Vec<_>>();
 
+        let updated_bodies = do_one_physics_step(dt, bodies);
+
+        let (bodies_to_delete, bodies_to_update): (Vec<_>, Vec<_>) =
+            updated_bodies.into_iter().partition(|body| body.delete);
+        let bodies_to_update = bodies_to_update
+            .into_iter()
+            .map(|body| (body.id, body))
+            .collect::<HashMap<_, _>>();
+
+        let ids_to_delete = bodies_to_delete
+            .into_iter()
+            .map(|body| body.id)
+            .collect::<Vec<_>>();
+        let mut entities_to_delete = vec![];
+
         let query = <(
-            Read<Position>,
+            Write<Position>,
             Write<Velocity>,
             Write<Dimensions>,
-            Read<Data>,
+            Read<Id>,
         )>::query();
-        let mut entities_to_delete = vec![];
-        for (entity, (position, mut velocity, mut dimensions, data)) in
+        for (entity, (mut pos, mut velocity, mut dimensions, id)) in
             query.iter_entities_mut(&mut self.world)
         {
-            for (other_position, other_velocity, other_mass, other_radius, other_data) in &bodies {
-                let data: &Data = &data;
-                let other_data: &Data = other_data;
-                if data == other_data || data.sun {
-                    continue;
-                }
-
-                if are_colliding(
-                    position.vector,
-                    dimensions.radius,
-                    other_position.vector,
-                    *other_radius,
-                ) {
-                    // the bigger body swallows the smaller one
-                    // this will one twice for each collision, with this and other swapped, lets utilize this
-                    if dimensions.mass > *other_mass {
-                        // when this is the bigger one, enlarge it
-                        // todo scale vector based on size difference
-                        let mass_ratio = *other_mass / dimensions.mass;
-                        velocity.vector += other_velocity.vector * mass_ratio;
-                        // velocity.vector = Vector2::new(0.,0.);
-                        dimensions.mass += *other_mass;
-                    } else {
-                        // when it's the smaller one, schedule it for deletion
-                        entities_to_delete.push(entity);
-                    }
-                }
+            if ids_to_delete.contains(&id.id) {
+                entities_to_delete.push(entity)
+            } else {
+                let updated_version = bodies_to_update
+                    .get(&id.id)
+                    .expect("updated body should exist");
+                pos.vector = updated_version.position;
+                velocity.vector = updated_version.velocity;
+                dimensions.mass = updated_version.mass; //todo recalculate radius
             }
         }
 
@@ -239,7 +210,7 @@ impl Core {
         }
     }
 
-    pub(crate) fn draw(&self) -> Vec<Drawable> {
+    pub(crate) fn draw(&self) -> (Vec<Drawable>, Vec<Vector2<f64>>) {
         let query = <(Read<Position>, Read<Data>, Read<Dimensions>)>::query();
         let mut bodies = query
             .iter(&self.world)
@@ -266,11 +237,13 @@ impl Core {
                 select_marker: true,
             })
             .collect::<Vec<_>>();
+
         bodies.append(&mut selection_markers);
-        bodies
+        (bodies, self.predicted_orbit.clone().unwrap_or_default())
     }
 
     pub(crate) fn click(&mut self, click_position: Vector2<f64>) {
+        self.predicted_orbit = None;
         let id_of_clicked_body = {
             <(Read<Position>, Read<Dimensions>, Read<Id>)>::query()
                 .iter(&self.world)
@@ -327,9 +300,9 @@ pub(crate) struct Drawable {
 }
 
 fn calculate_gravitational_force(
-    position: Vector2<f64>,
-    mass: f64,
-    other_position: Vector2<f64>,
+    position: &Vector2<f64>,
+    mass: &f64,
+    other_position: &Vector2<f64>,
     other_mass: &f64,
 ) -> Vector2<f64> {
     let difference: Vector2<f64> = other_position - position;
@@ -357,6 +330,117 @@ fn are_colliding(
     } else {
         false
     }
+}
+
+fn predict_orbit(time_step: f64, world: &World) -> Vec<Vector2<f64>> {
+    let mut bodies = <(
+        Read<Position>,
+        Read<Velocity>,
+        Read<Dimensions>,
+        Read<MetaInfo>,
+        Read<Id>,
+        Read<Data>,
+    )>::query()
+    .iter(world)
+    .map(|(pos, velocity, dimensions, meta_info, id, data)| Body {
+        position: pos.vector,
+        velocity: velocity.vector,
+        radius: dimensions.radius,
+        mass: dimensions.mass,
+        selected: meta_info.selected,
+        id: id.id,
+        sun: data.sun,
+        delete: false,
+    })
+    .collect::<Vec<_>>();
+
+    let mut predicted_positions = vec![];
+    for i in 0..10000 {
+        bodies = do_one_physics_step(time_step, bodies);
+        bodies = bodies
+            .into_iter()
+            .filter(|body| !body.delete)
+            .collect::<Vec<_>>();
+        if i % 100 == 0 {
+            let maybe_selected = bodies.iter().find(|body| body.selected);
+            if let Some(body) = maybe_selected {
+                predicted_positions.push(body.position);
+            }
+        }
+    }
+    predicted_positions
+}
+
+#[derive(Clone, Debug)]
+struct Body {
+    position: Vector2<f64>,
+    velocity: Vector2<f64>,
+    radius: f64,
+    mass: f64,
+    selected: bool,
+    id: i32,
+    sun: bool,
+    delete: bool,
+}
+
+fn do_one_physics_step(time_step: f64, mut bodies: Vec<Body>) -> Vec<Body> {
+    // calculate new velocities
+    let clones = bodies.clone();
+    bodies = bodies
+        .into_iter()
+        .map(|mut body| {
+            for clone in &clones {
+                if body.id == clone.id || body.sun {
+                    continue;
+                }
+                let gravitational_force = calculate_gravitational_force(
+                    &body.position,
+                    &body.mass,
+                    &clone.position,
+                    &clone.mass,
+                );
+                body.velocity += gravitational_force * time_step;
+            }
+            body
+        })
+        .collect::<Vec<_>>();
+    // move bodies
+    bodies = bodies
+        .into_iter()
+        .map(|mut body| {
+            body.position += body.velocity * time_step;
+            body
+        })
+        .collect::<Vec<_>>();
+
+    // collision detection
+    let clones = bodies.clone();
+    bodies = bodies
+        .into_iter()
+        .map(|mut body| {
+            for clone in &clones {
+                if body.id == clone.id || body.sun {
+                    continue;
+                }
+                if are_colliding(body.position, body.radius, clone.position, clone.radius) {
+                    // the bigger body swallows the smaller one
+                    // this will happen twice for each collision, with this and other swapped, lets utilize this
+                    if body.mass > clone.mass {
+                        // when this is the bigger one, enlarge it
+                        let mass_ratio = clone.mass / body.mass;
+                        body.velocity += clone.velocity * mass_ratio;
+                        body.mass += clone.mass;
+                    } else {
+                        // when it's the smaller one, schedule it for deletion
+                        body.delete = true;
+                    }
+                }
+            }
+            body
+        })
+        .collect::<Vec<_>>();
+
+    bodies
 }
 
 #[cfg(test)]
