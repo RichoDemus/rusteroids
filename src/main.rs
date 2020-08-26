@@ -18,6 +18,7 @@ mod util;
 pub(crate) const FPS: f32 = 60.0;
 #[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
 pub(crate) const FPS: f32 = 144.0;
+pub(crate) const UPS: f32 = 200.;
 
 pub(crate) const WIDTH: f32 = 800.0;
 pub(crate) const HEIGHT: f32 = 600.0;
@@ -25,10 +26,10 @@ pub(crate) const HEIGHT: f32 = 600.0;
 pub(crate) const NUM_BODIES: i32 = 5;
 #[cfg(not(debug_assertions))]
 pub(crate) const NUM_BODIES: i32 = 100;
-pub(crate) const BODY_INITIAL_MASS_MAX: f32 = 50.;
+pub(crate) const BODY_INITIAL_MASS_MAX: f64 = 50.;
 pub(crate) const INITIAL_SPEED: i32 = 50;
-pub(crate) const SUN_SIZE: f32 = 1000.;
-pub(crate) const GRAVITATIONAL_CONSTANT: f32 = 0.5;
+pub(crate) const SUN_SIZE: f64 = 1000.;
+pub(crate) const GRAVITATIONAL_CONSTANT: f64 = 5.;
 
 fn main() {
     run(
@@ -49,11 +50,12 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
     core.init();
     let mut frames: u32 = 0;
     let mut last_fps: u32 = 0;
+    let dt = 1. / (UPS as f64);
 
     // Here we make 2 kinds of timers.
     // One to provide an consistant update time, so our example updates 30 times per second
     // the other informs us when to draw the next frame, this causes our example to draw 60 times per second
-    let mut update_timer = Timer::time_per_second(FPS);
+    let mut update_timer = Timer::time_per_second(UPS);
     let mut draw_timer = Timer::time_per_second(FPS);
     let mut fps_timer = Timer::time_per_second(1.);
 
@@ -79,7 +81,6 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
             }
         }
 
-        let dt = update_timer.elapsed().as_secs_f32();
         // We use a while loop rather than an if so that we can try to catch up in the event of having a slow down.
         while update_timer.tick() {
             core.tick(dt);
@@ -96,14 +97,17 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
             for drawable in drawables {
                 if drawable.select_marker {
                     let rectangle = Rectangle::new(
-                        Vector::new(drawable.position.x - 10., drawable.position.y - 10.),
+                        Vector::new(
+                            (drawable.position.x - 10.) as f32,
+                            (drawable.position.y - 10.) as f32,
+                        ),
                         Vector::new(20., 20.),
                     );
                     gfx.stroke_rect(&rectangle, Color::GREEN)
                 } else {
                     let circle = Circle::new(
-                        Vector::new(drawable.position.x, drawable.position.y),
-                        drawable.radius,
+                        Vector::new(drawable.position.x as f32, drawable.position.y as f32),
+                        drawable.radius as f32,
                     );
                     gfx.fill_circle(
                         &circle,

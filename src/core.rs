@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 use std::ops::Not;
 
 use itertools::Itertools;
@@ -16,24 +16,24 @@ use crate::{
 // Define our entity data types
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Position {
-    vector: Vector2<f32>,
+    vector: Vector2<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct MyVector2 {
-    x: f32,
-    y: f32,
+    x: f64,
+    y: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Velocity {
-    vector: Vector2<f32>,
+    vector: Vector2<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Dimensions {
-    radius: f32,
-    mass: f32,
+    radius: f64,
+    mass: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -42,8 +42,8 @@ struct MetaInfo {
 }
 
 impl Dimensions {
-    fn from_mass(mass: f32) -> Dimensions {
-        let radius: f32 = mass / (4. / 3. * PI);
+    fn from_mass(mass: f64) -> Dimensions {
+        let radius: f64 = mass / (4. / 3. * PI);
         let radius = radius.cbrt();
         Dimensions { mass, radius }
     }
@@ -91,7 +91,7 @@ impl Core {
                     sun: true,
                 },
                 Position {
-                    vector: Vector2::new(WIDTH / 2., HEIGHT / 2.),
+                    vector: Vector2::new((WIDTH as f32 / 2.).into(), (HEIGHT as f32 / 2.).into()),
                 },
                 Velocity {
                     vector: Vector2::new(0., 0.),
@@ -104,16 +104,16 @@ impl Core {
         self.world.insert(
             (),
             (0..NUM_BODIES).map(|i| {
-                let x = rng.gen_range(0., WIDTH);
-                let y = rng.gen_range(0., HEIGHT);
+                let x = rng.gen_range(0., WIDTH as f64);
+                let y = rng.gen_range(0., HEIGHT as f64);
 
                 let x_velocity = match INITIAL_SPEED {
                     0 => 0.,
-                    speed => rng.gen_range(-speed as f32, speed as f32),
+                    speed => rng.gen_range(-speed as f64, speed as f64),
                 };
                 let y_velocity = match INITIAL_SPEED {
                     0 => 0.,
-                    speed => rng.gen_range(-speed as f32, speed as f32),
+                    speed => rng.gen_range(-speed as f64, speed as f64),
                 };
 
                 let mass = rng.gen_range(1., BODY_INITIAL_MASS_MAX);
@@ -136,7 +136,7 @@ impl Core {
         );
     }
 
-    pub(crate) fn tick(&mut self, dt: f32) {
+    pub(crate) fn tick(&mut self, dt: f64) {
         if self.paused {
             return;
         }
@@ -160,22 +160,23 @@ impl Core {
                     continue;
                 }
 
-                velocity.vector += calculate_gravitational_force(
+                let gravitational_force = calculate_gravitational_force(
                     position.vector,
                     dimensions.mass,
                     other_position.vector,
                     other_mass,
                 );
+                velocity.vector += gravitational_force * dt;
             }
         }
 
         // update positions
         let query = <(Write<Position>, Read<Velocity>)>::query();
         for (mut position, velocity) in query.iter_mut(&mut self.world) {
-            let current_position: Vector2<f32> = position.vector.clone_owned();
-            let velocity: Vector2<f32> = velocity.vector.clone_owned() * dt;
+            let current_position: Vector2<f64> = position.vector.clone_owned();
+            let velocity: Vector2<f64> = velocity.vector.clone_owned();
 
-            position.vector = current_position + velocity;
+            position.vector = current_position + velocity * dt;
         }
 
         // collision detection
@@ -244,7 +245,7 @@ impl Core {
             .iter(&self.world)
             .map(|(pos, data, dimensions)| {
                 let position = *pos;
-                let position: Vector2<f32> = position.vector;
+                let position: Vector2<f64> = position.vector;
                 Drawable {
                     position,
                     sun: data.sun,
@@ -269,7 +270,7 @@ impl Core {
         bodies
     }
 
-    pub(crate) fn click(&mut self, click_position: Vector2<f32>) {
+    pub(crate) fn click(&mut self, click_position: Vector2<f64>) {
         let id_of_clicked_body = {
             <(Read<Position>, Read<Dimensions>, Read<Id>)>::query()
                 .iter(&self.world)
@@ -284,7 +285,7 @@ impl Core {
                     );
                     (distance, id)
                 })
-                .filter(|(distance, _)| distance < &5f32)
+                .filter(|(distance, _)| distance < &5f64)
                 .sorted_by(|(left_distance, _), (right_distance, _)| {
                     left_distance
                         .partial_cmp(right_distance)
@@ -319,31 +320,31 @@ impl Core {
 }
 
 pub(crate) struct Drawable {
-    pub(crate) position: Vector2<f32>,
+    pub(crate) position: Vector2<f64>,
     pub(crate) sun: bool,
-    pub(crate) radius: f32,
+    pub(crate) radius: f64,
     pub(crate) select_marker: bool,
 }
 
 fn calculate_gravitational_force(
-    position: Vector2<f32>,
-    mass: f32,
-    other_position: Vector2<f32>,
-    other_mass: &f32,
-) -> Vector2<f32> {
-    let difference: Vector2<f32> = other_position - position;
+    position: Vector2<f64>,
+    mass: f64,
+    other_position: Vector2<f64>,
+    other_mass: &f64,
+) -> Vector2<f64> {
+    let difference: Vector2<f64> = other_position - position;
     let distance = difference.magnitude();
-    let gravity_direction: Vector2<f32> = difference.normalize();
-    let gravity: f32 = GRAVITATIONAL_CONSTANT * (mass * other_mass) / (distance * distance);
+    let gravity_direction: Vector2<f64> = difference.normalize();
+    let gravity: f64 = GRAVITATIONAL_CONSTANT * (mass * other_mass) / (distance * distance);
 
     gravity_direction * gravity
 }
 
 fn are_colliding(
-    position: Vector2<f32>,
-    radius: f32,
-    other_position: Vector2<f32>,
-    other_radius: f32,
+    position: Vector2<f64>,
+    radius: f64,
+    other_position: Vector2<f64>,
+    other_radius: f64,
 ) -> bool {
     let shape = Ball::new(radius);
     let position = Isometry2::new(position, nalgebra::zero());
@@ -367,10 +368,10 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let vector: Vector2<f32> = Vector2::new(11., 11.);
+        let vector: Vector2<f64> = Vector2::new(11., 11.);
         let vector1 = Vector2::new(10., 10.);
 
-        let result: Vector2<f32> = vector1 - vector;
+        let result: Vector2<f64> = vector1 - vector;
 
         let result = result.magnitude();
 
