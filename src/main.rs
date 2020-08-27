@@ -60,7 +60,7 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
     let mut fps_timer = Timer::time_per_second(1.);
 
     let ttf = VectorFont::from_slice(include_bytes!("BebasNeue-Regular.ttf"));
-    let mut font = ttf.to_renderer(&gfx, 72.0)?;
+    let mut font = ttf.to_renderer(&gfx, 30.0)?;
 
     let mut running = true;
     while running {
@@ -129,7 +129,7 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                 &mut gfx,
                 format!("Bodies: {}", num_bodies).as_str(),
                 Color::GREEN,
-                Vector::new(5.0, 100.0),
+                Vector::new(10.0, 60.0),
             )?;
 
             frames += 1;
@@ -141,7 +141,14 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                 &mut gfx,
                 format!("FPS: {}", last_fps).as_str(),
                 Color::GREEN,
-                Vector::new(5.0, 50.0),
+                Vector::new(10.0, 30.0),
+            )?;
+
+            font.draw(
+                &mut gfx,
+                "Press <Spacebar> to pause, click body during pause for orbit prediction",
+                Color::GREEN,
+                Vector::new(10.0, HEIGHT - 10.),
             )?;
 
             gfx.present(&window)?;
