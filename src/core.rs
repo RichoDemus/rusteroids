@@ -147,27 +147,7 @@ impl Core {
             return;
         }
 
-        let query = <(
-            Read<Position>,
-            Read<Velocity>,
-            Read<Dimensions>,
-            Read<MetaInfo>,
-            Read<Id>,
-            Read<Data>,
-        )>::query();
-        let bodies = query
-            .iter(&self.world)
-            .map(|(pos, velocity, dimensions, meta_info, id, data)| Body {
-                position: pos.vector,
-                velocity: velocity.vector,
-                radius: dimensions.radius,
-                mass: dimensions.mass,
-                selected: meta_info.selected,
-                id: id.id,
-                sun: data.sun,
-                delete: false,
-            })
-            .collect::<Vec<_>>();
+        let bodies = get_bodies(&self.world);
 
         let updated_bodies = do_one_physics_step(dt, bodies);
 
@@ -332,8 +312,8 @@ fn are_colliding(
     }
 }
 
-fn predict_orbit(time_step: f64, world: &World) -> Vec<Vector2<f64>> {
-    let mut bodies = <(
+fn get_bodies(world: &World) -> Vec<Body> {
+    <(
         Read<Position>,
         Read<Velocity>,
         Read<Dimensions>,
@@ -352,7 +332,11 @@ fn predict_orbit(time_step: f64, world: &World) -> Vec<Vector2<f64>> {
         sun: data.sun,
         delete: false,
     })
-    .collect::<Vec<_>>();
+    .collect::<Vec<_>>()
+}
+
+fn predict_orbit(time_step: f64, world: &World) -> Vec<Vector2<f64>> {
+    let mut bodies = get_bodies(world);
 
     let mut predicted_positions = vec![];
     for i in 0..10000 {
