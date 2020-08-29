@@ -139,7 +139,7 @@ impl Core {
         );
     }
 
-    pub(crate) fn tick(&mut self, dt: f64) {
+    pub(crate) fn tick(&mut self, dt: f64, camera_x_axis: f64, camera_y_axis: f64) {
         if self.paused {
             if self.predicted_orbit.is_none() {
                 self.predicted_orbit = Some(predict_orbit(dt, &self.world));
@@ -180,6 +180,8 @@ impl Core {
                     .get(&id.id)
                     .expect("updated body should exist");
                 pos.vector = updated_version.position;
+                // camera movement
+                pos.vector += Vector2::new(camera_x_axis, camera_y_axis);
                 velocity.vector = updated_version.velocity;
                 dimensions.mass = updated_version.mass; //todo recalculate radius
             }

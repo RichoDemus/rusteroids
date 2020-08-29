@@ -1,8 +1,7 @@
-use quicksilver::blinds::event::Key::{Escape, Space};
 use quicksilver::blinds::event::MouseButton::Left;
 use quicksilver::geom::{Circle, Rectangle};
 use quicksilver::graphics::VectorFont;
-use quicksilver::input::Event;
+use quicksilver::input::{Event, Key};
 use quicksilver::{
     geom::Vector, graphics::Color, run, Graphics, Input, Result, Settings, Timer, Window,
 };
@@ -63,7 +62,11 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
     let mut font = ttf.to_renderer(&gfx, 30.0)?;
 
     let mut running = true;
+    let mut camera_y_axis;
+    let mut camera_x_axis;
     while running {
+        camera_y_axis = 0.;
+        camera_x_axis = 0.;
         while let Some(event) = input.next_event().await {
             if let Event::PointerInput(pointer_input_event) = event {
                 if !pointer_input_event.is_down() && pointer_input_event.button() == Left {
@@ -72,18 +75,29 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                     core.click(convert(mouse_position));
                 }
             } else if let Event::KeyboardInput(keyboard_event) = event {
-                if keyboard_event.is_down() && keyboard_event.key() == Space {
+                if keyboard_event.is_down() && keyboard_event.key() == Key::Space {
                     core.pause();
-                }
-                if keyboard_event.is_down() && keyboard_event.key() == Escape {
+                } else if keyboard_event.is_down() && keyboard_event.key() == Key::Escape {
                     running = false;
                 }
             }
         }
+        if input.key_down(Key::W) {
+            camera_y_axis = 1.;
+        }
+        if input.key_down(Key::S) {
+            camera_y_axis = -1.;
+        }
+        if input.key_down(Key::D) {
+            camera_x_axis = -1.;
+        }
+        if input.key_down(Key::A) {
+            camera_x_axis = 1.;
+        }
 
         // We use a while loop rather than an if so that we can try to catch up in the event of having a slow down.
         while update_timer.tick() {
-            core.tick(dt);
+            core.tick(dt, camera_x_axis, camera_y_axis);
         }
 
         // Unlike the update cycle drawing doesn't change our state
@@ -149,6 +163,12 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                 "Press <Spacebar> to pause, click body during pause for orbit prediction",
                 Color::GREEN,
                 Vector::new(10.0, HEIGHT - 10.),
+            )?;
+            font.draw(
+                &mut gfx,
+                "Move Camera with WASD",
+                Color::GREEN,
+                Vector::new(10.0, HEIGHT - 40.),
             )?;
 
             gfx.present(&window)?;
