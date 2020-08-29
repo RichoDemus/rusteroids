@@ -1,7 +1,7 @@
 use quicksilver::blinds::event::MouseButton::Left;
 use quicksilver::geom::{Circle, Rectangle};
 use quicksilver::graphics::VectorFont;
-use quicksilver::input::{Event, Key};
+use quicksilver::input::{Event, Key, ScrollDelta};
 use quicksilver::{
     geom::Vector, graphics::Color, run, Graphics, Input, Result, Settings, Timer, Window,
 };
@@ -64,6 +64,7 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
     let mut running = true;
     let mut camera_y_axis;
     let mut camera_x_axis;
+    let mut zoom_scale = 1.;
     while running {
         camera_y_axis = 0.;
         camera_x_axis = 0.;
@@ -79,6 +80,10 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                     core.pause();
                 } else if keyboard_event.is_down() && keyboard_event.key() == Key::Escape {
                     running = false;
+                }
+            } else if let Event::ScrollInput(delta) = event {
+                if let ScrollDelta::Lines(lines) = delta {
+                    zoom_scale += lines.y * 0.1;
                 }
             }
         }
@@ -120,8 +125,11 @@ async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> 
                     gfx.stroke_rect(&rectangle, Color::GREEN)
                 } else {
                     let circle = Circle::new(
-                        Vector::new(drawable.position.x as f32, drawable.position.y as f32),
-                        drawable.radius as f32,
+                        Vector::new(
+                            drawable.position.x as f32 * zoom_scale,
+                            drawable.position.y as f32 * zoom_scale,
+                        ),
+                        drawable.radius as f32 * zoom_scale,
                     );
                     gfx.fill_circle(
                         &circle,
