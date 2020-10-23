@@ -4,7 +4,7 @@ use std::ops::Not;
 
 use itertools::Itertools;
 use legion::prelude::*;
-use nalgebra::{Isometry2, Point, Vector2};
+use nalgebra::{Isometry2, Point, Point2, Vector2};
 use ncollide2d::query::{self, PointQuery, Proximity};
 use ncollide2d::shape::Ball;
 use rand::Rng;
@@ -17,7 +17,7 @@ use crate::{
 // Define our entity data types
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Position {
-    vector: Vector2<f64>,
+    point: Point2<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,7 +70,7 @@ struct Static;
 pub(crate) struct Core {
     world: World,
     paused: bool,
-    predicted_orbit: Option<Vec<Vector2<f64>>>,
+    predicted_orbit: Option<Vec<Point2<f64>>>,
 }
 
 impl Core {
@@ -94,7 +94,7 @@ impl Core {
                     sun: true,
                 },
                 Position {
-                    vector: Vector2::new((WIDTH as f32 / 2.).into(), (HEIGHT as f32 / 2.).into()),
+                    point: Point2::new((WIDTH as f32 / 2.).into(), (HEIGHT as f32 / 2.).into()),
                 },
                 Velocity {
                     vector: Vector2::new(0., 0.),
@@ -126,7 +126,7 @@ impl Core {
                         sun: false,
                     },
                     Position {
-                        vector: Vector2::new(x, y),
+                        point: Point2::new(x, y),
                     },
                     Velocity {
                         vector: Vector2::new(x_velocity, y_velocity),
@@ -179,9 +179,9 @@ impl Core {
                 let updated_version = bodies_to_update
                     .get(&id.id)
                     .expect("updated body should exist");
-                pos.vector = updated_version.position;
+                pos.point = updated_version.position;
                 // camera movement
-                pos.vector += Vector2::new(camera_x_axis, camera_y_axis);
+                pos.point += Vector2::new(camera_x_axis, camera_y_axis);
                 velocity.vector = updated_version.velocity;
                 dimensions.mass = updated_version.mass; //todo recalculate radius
             }
@@ -192,13 +192,13 @@ impl Core {
         }
     }
 
-    pub(crate) fn draw(&self) -> (Vec<Drawable>, Vec<Vector2<f64>>) {
+    pub(crate) fn draw(&self) -> (Vec<Drawable>, Vec<Point2<f64>>) {
         let query = <(Read<Position>, Read<Data>, Read<Dimensions>)>::query();
         let mut bodies = query
             .iter(&self.world)
             .map(|(pos, data, dimensions)| {
                 let position = *pos;
-                let position: Vector2<f64> = position.vector;
+                let position: Point2<f64> = position.point;
                 Drawable {
                     position,
                     sun: data.sun,
@@ -213,7 +213,7 @@ impl Core {
             .iter(&self.world)
             .filter(|(_, _, meta_info)| meta_info.selected)
             .map(|(position, dimensions, _)| Drawable {
-                position: position.vector,
+                position: position.point,
                 sun: false,
                 radius: dimensions.radius,
                 select_marker: true,
@@ -232,7 +232,7 @@ impl Core {
                 .map(|(position, dimensions, id)| {
                     let ball = Ball::new(dimensions.radius);
                     let distance = ball.distance_to_point(
-                        &Isometry2::translation(position.vector.x, position.vector.y),
+                        &Isometry2::translation(position.point.x, position.point.y),
                         &Point {
                             coords: click_position,
                         },
@@ -275,16 +275,16 @@ impl Core {
 }
 
 pub(crate) struct Drawable {
-    pub(crate) position: Vector2<f64>,
+    pub(crate) position: Point2<f64>,
     pub(crate) sun: bool,
     pub(crate) radius: f64,
     pub(crate) select_marker: bool,
 }
 
 fn calculate_gravitational_force(
-    position: &Vector2<f64>,
+    position: &Point2<f64>,
     mass: &f64,
-    other_position: &Vector2<f64>,
+    other_position: &Point2<f64>,
     other_mass: &f64,
 ) -> Vector2<f64> {
     let difference: Vector2<f64> = other_position - position;
@@ -296,15 +296,15 @@ fn calculate_gravitational_force(
 }
 
 fn are_colliding(
-    position: Vector2<f64>,
+    position: Point2<f64>,
     radius: f64,
-    other_position: Vector2<f64>,
+    other_position: Point2<f64>,
     other_radius: f64,
 ) -> bool {
     let shape = Ball::new(radius);
-    let position = Isometry2::new(position, nalgebra::zero());
+    let position = Isometry2::new(position.coords, nalgebra::zero());
     let other_shape = Ball::new(other_radius);
-    let other_position = Isometry2::new(other_position, nalgebra::zero());
+    let other_position = Isometry2::new(other_position.coords, nalgebra::zero());
 
     let proximity = query::proximity(&position, &shape, &other_position, &other_shape, 0.);
     if let Proximity::Intersecting = proximity {
@@ -325,7 +325,7 @@ fn get_bodies(world: &World) -> Vec<Body> {
     )>::query()
     .iter(world)
     .map(|(pos, velocity, dimensions, meta_info, id, data)| Body {
-        position: pos.vector,
+        position: pos.point,
         velocity: velocity.vector,
         radius: dimensions.radius,
         mass: dimensions.mass,
@@ -337,7 +337,7 @@ fn get_bodies(world: &World) -> Vec<Body> {
     .collect::<Vec<_>>()
 }
 
-fn predict_orbit(time_step: f64, world: &World) -> Vec<Vector2<f64>> {
+fn predict_orbit(time_step: f64, world: &World) -> Vec<Point2<f64>> {
     let mut bodies = get_bodies(world);
 
     let mut predicted_positions = vec![];
@@ -357,9 +357,10 @@ fn predict_orbit(time_step: f64, world: &World) -> Vec<Vector2<f64>> {
     predicted_positions
 }
 
+// intermediare struct to pass a body around
 #[derive(Clone, Debug)]
 struct Body {
-    position: Vector2<f64>,
+    position: Point2<f64>,
     velocity: Vector2<f64>,
     radius: f64,
     mass: f64,
