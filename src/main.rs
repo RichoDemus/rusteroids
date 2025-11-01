@@ -7,7 +7,6 @@ const NUM_BODIES: usize = 100;
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 const GRAVITATIONAL_CONSTANT: f64 = 100.0;
-const SOFTENING_FACTOR: f32 = 10.0;
 const DENSITY: f32 = 1.0;
 const INITIAL_VELOCITY_MAX: f32 = 50.0;
 
@@ -193,11 +192,10 @@ fn calculate_gravitational_force(
     other_mass: f32,
 ) -> Vec2 {
     let difference = other_position - position;
-    let distance_sq = difference.length_squared();
 
     // a = G * m2 / r^2
     let acceleration_magnitude =
-        (GRAVITATIONAL_CONSTANT as f32 * other_mass) / (distance_sq + SOFTENING_FACTOR);
+        (GRAVITATIONAL_CONSTANT as f32 * other_mass) / difference.length_squared();
 
     // Return the acceleration vector
     difference.normalize_or_zero() * acceleration_magnitude
