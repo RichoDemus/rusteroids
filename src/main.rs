@@ -1,186 +1,204 @@
-use quicksilver::blinds::event::MouseButton::Left;
-use quicksilver::geom::{Circle, Rectangle};
-use quicksilver::graphics::VectorFont;
-use quicksilver::input::{Event, Key, ScrollDelta};
-use quicksilver::{
-    geom::Vector, graphics::Color, run, Graphics, Input, Result, Settings, Timer, Window,
-};
+use bevy::math::bounding::{BoundingCircle, IntersectsVolume};
+use bevy::prelude::*;
+use bevy::window::WindowResolution;
+use rand::Rng;
 
-use crate::core::Core;
-use crate::util::convert;
-
-mod core;
-mod util;
-
-// use 144 fps for non wasm release, use 60 fps for wasm or debug
-#[cfg(any(target_arch = "wasm32", debug_assertions))]
-pub(crate) const FPS: f32 = 60.0;
-#[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
-pub(crate) const FPS: f32 = 144.0;
-pub(crate) const UPS: f32 = 200.;
-
-pub(crate) const WIDTH: f32 = 800.0;
-pub(crate) const HEIGHT: f32 = 600.0;
-#[cfg(debug_assertions)]
-pub(crate) const NUM_BODIES: i32 = 5;
-#[cfg(not(debug_assertions))]
-pub(crate) const NUM_BODIES: i32 = 100;
-pub(crate) const BODY_INITIAL_MASS_MAX: f64 = 50.;
-pub(crate) const INITIAL_SPEED: i32 = 50;
-pub(crate) const SUN_SIZE: f64 = 1000.;
-pub(crate) const GRAVITATIONAL_CONSTANT: f64 = 5.;
+const NUM_BODIES: usize = 100;
+const WIDTH: u32 = 800;
+const HEIGHT: u32 = 600;
+const GRAVITATIONAL_CONSTANT: f64 = 100.0;
+const SOFTENING_FACTOR: f32 = 10.0;
+const DENSITY: f32 = 1.0;
+const INITIAL_VELOCITY_MAX: f32 = 50.0;
 
 fn main() {
-    run(
-        Settings {
-            title: "Rusteroids",
-            size: Vector {
-                x: WIDTH,
-                y: HEIGHT,
-            },
-            ..Settings::default()
-        },
-        app,
-    );
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                resolution: WindowResolution::new(WIDTH, HEIGHT).with_scale_factor_override(1.0),
+                ..default()
+            }),
+            ..default()
+        }))
+        .add_systems(Startup, setup)
+        .add_systems(FixedUpdate, apply_gravity)
+        .add_systems(FixedUpdate, apply_velocity)
+        .add_systems(FixedUpdate, detect_collisions)
+        .add_observer(handle_collisions)
+        .run();
+}
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    commands.spawn(Camera2d);
+
+    // create a happy little sun
+    let radius = 30.;
+    commands.spawn((
+        Mesh2d(meshes.add(Circle::new(radius))),
+        MeshMaterial2d(materials.add(Color::srgba(1.0, 0.5, 0.0, 1.0))),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        Density(DENSITY),
+        Velocity(Vec2::ZERO),
+        Sun,
+        Radius(radius),
+    ));
+
+    // create some happy little celestial bodies
+    for _ in 0..NUM_BODIES {
+        let radius = rand::rng().random_range(1.0..5.0);
+        commands.spawn((
+            Mesh2d(meshes.add(Circle::new(radius))),
+            MeshMaterial2d(materials.add(Color::WHITE)),
+            Transform::from_xyz(
+                rand::rng().random_range(-(WIDTH as f32) / 2.0..WIDTH as f32 / 2.0),
+                rand::rng().random_range(-(HEIGHT as f32) / 2.0..HEIGHT as f32 / 2.0),
+                0.0,
+            ),
+            Velocity(Vec2::new(
+                rand::rng().random_range(-INITIAL_VELOCITY_MAX..INITIAL_VELOCITY_MAX),
+                rand::rng().random_range(-INITIAL_VELOCITY_MAX..INITIAL_VELOCITY_MAX),
+            )),
+            Density(DENSITY),
+            Radius(radius),
+        ));
+    }
 }
 
-async fn app(window: Window, mut gfx: Graphics, mut input: Input) -> Result<()> {
-    let mut core = Core::new();
-    core.init();
-    let mut frames: u32 = 0;
-    let mut last_fps: u32 = 0;
-    let dt = 1. / (UPS as f64);
+#[derive(Component, Deref, DerefMut)]
+struct Radius(f32);
 
-    // Here we make 2 kinds of timers.
-    // One to provide an consistant update time, so our example updates 30 times per second
-    // the other informs us when to draw the next frame, this causes our example to draw 60 times per second
-    let mut update_timer = Timer::time_per_second(UPS);
-    let mut draw_timer = Timer::time_per_second(FPS);
-    let mut fps_timer = Timer::time_per_second(1.);
+#[derive(Component, Deref, DerefMut)]
+struct Density(f32);
 
-    let ttf = VectorFont::from_slice(include_bytes!("BebasNeue-Regular.ttf"));
-    let mut font = ttf.to_renderer(&gfx, 30.0)?;
+#[derive(Event)]
+struct CollisionEvent(Entity, Entity);
 
-    let mut running = true;
-    let mut camera_y_axis;
-    let mut camera_x_axis;
-    let mut zoom_scale = 1.;
-    while running {
-        camera_y_axis = 0.;
-        camera_x_axis = 0.;
-        while let Some(event) = input.next_event().await {
-            if let Event::PointerInput(pointer_input_event) = event {
-                if !pointer_input_event.is_down() && pointer_input_event.button() == Left {
-                    let mouse_position = input.mouse().location();
+fn detect_collisions(mut commands: Commands, query: Query<(Entity, &Transform, &Radius)>) {
+    for [
+        (left_entity, left_transform, left_radius),
+        (right_entity, right_transform, right_radius),
+    ] in query.iter_combinations()
+    {
+        let left = BoundingCircle::new(left_transform.translation.truncate(), left_radius.0);
+        let right = BoundingCircle::new(right_transform.translation.truncate(), right_radius.0);
 
-                    core.click(convert(mouse_position));
-                }
-            } else if let Event::KeyboardInput(keyboard_event) = event {
-                if keyboard_event.is_down() && keyboard_event.key() == Key::Space {
-                    core.pause();
-                } else if keyboard_event.is_down() && keyboard_event.key() == Key::Escape {
-                    running = false;
-                }
-            } else if let Event::ScrollInput(delta) = event {
-                if let ScrollDelta::Lines(lines) = delta {
-                    zoom_scale += lines.y * 0.1;
-                }
-            }
-        }
-        if input.key_down(Key::W) {
-            camera_y_axis = 1.;
-        }
-        if input.key_down(Key::S) {
-            camera_y_axis = -1.;
-        }
-        if input.key_down(Key::D) {
-            camera_x_axis = -1.;
-        }
-        if input.key_down(Key::A) {
-            camera_x_axis = 1.;
-        }
-
-        // We use a while loop rather than an if so that we can try to catch up in the event of having a slow down.
-        while update_timer.tick() {
-            core.tick(dt, camera_x_axis, camera_y_axis);
-        }
-
-        // Unlike the update cycle drawing doesn't change our state
-        // Because of this there is no point in trying to catch up if we are ever 2 frames late
-        // Instead it is better to drop/skip the lost frames
-        if draw_timer.exhaust().is_some() {
-            gfx.clear(Color::BLACK);
-
-            let (drawables, predicted_orbit) = core.draw();
-            let num_bodies = drawables.len();
-            for drawable in drawables {
-                if drawable.select_marker {
-                    let rectangle = Rectangle::new(
-                        Vector::new(
-                            (drawable.position.x - 10.) as f32,
-                            (drawable.position.y - 10.) as f32,
-                        ),
-                        Vector::new(20., 20.),
-                    );
-                    gfx.stroke_rect(&rectangle, Color::GREEN)
-                } else {
-                    let circle = Circle::new(
-                        Vector::new(
-                            drawable.position.x as f32 * zoom_scale,
-                            drawable.position.y as f32 * zoom_scale,
-                        ),
-                        drawable.radius as f32 * zoom_scale,
-                    );
-                    gfx.fill_circle(
-                        &circle,
-                        match drawable.sun {
-                            true => Color::YELLOW,
-                            false => Color::WHITE,
-                        },
-                    );
-                }
-            }
-
-            for orbit_point in predicted_orbit {
-                let circle =
-                    Circle::new(Vector::new(orbit_point.x as f32, orbit_point.y as f32), 1.);
-                gfx.fill_circle(&circle, Color::YELLOW);
-            }
-
-            font.draw(
-                &mut gfx,
-                format!("Bodies: {}", num_bodies).as_str(),
-                Color::GREEN,
-                Vector::new(10.0, 60.0),
-            )?;
-
-            frames += 1;
-            if fps_timer.tick() {
-                last_fps = frames;
-                frames = 0;
-            }
-            font.draw(
-                &mut gfx,
-                format!("FPS: {}", last_fps).as_str(),
-                Color::GREEN,
-                Vector::new(10.0, 30.0),
-            )?;
-
-            font.draw(
-                &mut gfx,
-                "Press <Spacebar> to pause, click body during pause for orbit prediction",
-                Color::GREEN,
-                Vector::new(10.0, HEIGHT - 10.),
-            )?;
-            font.draw(
-                &mut gfx,
-                "Move Camera with WASD",
-                Color::GREEN,
-                Vector::new(10.0, HEIGHT - 40.),
-            )?;
-
-            gfx.present(&window)?;
+        if left.intersects(&right) {
+            commands.trigger(CollisionEvent(left_entity, right_entity))
         }
     }
-    Ok(())
+}
+
+fn handle_collisions(
+    event: On<CollisionEvent>,
+    mut query: Query<(&mut Radius, &mut Velocity, &Density, &mut Mesh2d)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut commands: Commands,
+) {
+    let (left_entity, right_entity) = (event.event().0, event.event().1);
+
+    // Use get_many_mut to get mutable access to both entities at the same time.
+    // This is the idiomatic Bevy way to avoid borrow-checker issues.
+    if let Ok(
+        [
+            (mut left_radius, mut left_velocity, left_density, mut left_mesh),
+            (mut right_radius, mut right_velocity, right_density, mut right_mesh),
+        ],
+    ) = query.get_many_mut([left_entity, right_entity])
+    {
+        let left_mass = left_density.0 * std::f32::consts::PI * left_radius.0 * left_radius.0;
+        let right_mass = right_density.0 * std::f32::consts::PI * right_radius.0 * right_radius.0;
+
+        // The more massive body absorbs the smaller one.
+        if left_mass > right_mass {
+            // Conserve momentum: v1_new = (m1*v1 + m2*v2) / (m1 + m2)
+            // We can simplify this to an inelastic collision calculation.
+            let combined_mass = left_mass + right_mass;
+            left_velocity.0 =
+                (left_mass * left_velocity.0 + right_mass * right_velocity.0) / combined_mass;
+
+            // New radius is calculated to conserve mass
+            left_radius.0 = (left_radius.0.powi(2) + right_radius.0.powi(2)).sqrt();
+            *left_mesh = Mesh2d(meshes.add(Circle::new(left_radius.0)));
+
+            // Despawn the smaller entity.
+            commands.entity(right_entity).despawn();
+        } else {
+            let combined_mass = left_mass + right_mass;
+            right_velocity.0 =
+                (left_mass * left_velocity.0 + right_mass * right_velocity.0) / combined_mass;
+
+            right_radius.0 = (left_radius.0.powi(2) + right_radius.0.powi(2)).sqrt();
+            *right_mesh = Mesh2d(meshes.add(Circle::new(right_radius.0)));
+
+            commands.entity(left_entity).despawn();
+        }
+    } else {
+        // This can happen if one of the entities was already despawned in the same frame.
+    }
+}
+
+#[derive(Component)]
+struct Sun;
+
+#[derive(Component, Deref, DerefMut)]
+struct Velocity(Vec2);
+
+fn apply_velocity(mut query: Query<(&mut Transform, &Velocity), Without<Sun>>, time: Res<Time>) {
+    for (mut transform, velocity) in &mut query {
+        transform.translation.x += velocity.x * time.delta_secs();
+        transform.translation.y += velocity.y * time.delta_secs();
+    }
+}
+
+fn apply_gravity(
+    mut query: Query<(&mut Velocity, &Transform, &Radius, &Density, Option<&Sun>)>,
+    time: Res<Time>,
+) {
+    let mut combinations = query.iter_combinations_mut();
+    while let Some(
+        [
+            (mut vel1, trans1, radius1, density1, sun1),
+            (mut vel2, trans2, radius2, density2, sun2),
+        ],
+    ) = combinations.fetch_next()
+    {
+        let pos1 = trans1.translation.truncate();
+        let pos2 = trans2.translation.truncate();
+
+        let mass1 = density1.0 * std::f32::consts::PI * radius1.0 * radius1.0;
+        let mass2 = density2.0 * std::f32::consts::PI * radius2.0 * radius2.0;
+
+        // Calculate acceleration of body 1 due to body 2
+        if sun1.is_none() {
+            let acc1 = calculate_gravitational_force(pos1, mass1, pos2, mass2);
+            vel1.0 += acc1 * time.delta_secs();
+        }
+
+        // Calculate acceleration of body 2 due to body 1
+        // This is the opposite of the first force, scaled by the mass ratio
+        if sun2.is_none() {
+            let acc2 = calculate_gravitational_force(pos2, mass2, pos1, mass1);
+            vel2.0 += acc2 * time.delta_secs();
+        }
+    }
+}
+
+fn calculate_gravitational_force(
+    position: Vec2,
+    _mass: f32,
+    other_position: Vec2,
+    other_mass: f32,
+) -> Vec2 {
+    let difference = other_position - position;
+    let distance_sq = difference.length_squared();
+
+    // a = G * m2 / r^2
+    let acceleration_magnitude =
+        (GRAVITATIONAL_CONSTANT as f32 * other_mass) / (distance_sq + SOFTENING_FACTOR);
+
+    // Return the acceleration vector
+    difference.normalize_or_zero() * acceleration_magnitude
 }
